@@ -1,0 +1,255 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* その他のカスタムスタイルはここに追加 */
+
+/* カスタムスタイル */
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  line-height: 1.6;
+  color: #333;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #f5f7fa;
+}
+h1, h2, h3 {
+  color: #2c3e50;
+}
+.container {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.panel {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  margin-bottom: 20px;
+  flex: 1;
+  min-width: 300px;
+}
+.form-group {
+  margin-bottom: 15px;
+}
+label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 600;
+}
+input, textarea, select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+button {
+  background-color: #3498db;
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background-color 0.3s;
+}
+button:hover {
+  background-color: #2980b9;
+}
+button:disabled {
+  background-color: #95a5a6;
+  cursor: not-allowed;
+}
+.status-message {
+  padding: 10px;
+  border-radius: 4px;
+  margin: 10px 0;
+}
+.status-message.success {
+  background-color: #d4efdf;
+  color: #27ae60;
+}
+.status-message.error {
+  background-color: #fadbd8;
+  color: #e74c3c;
+}
+.status-message.loading {
+  background-color: #eaeded;
+  color: #7f8c8d;
+}
+.tabs {
+  display: flex;
+  margin-bottom: 15px;
+  border-bottom: 1px solid #ddd;
+}
+.tab {
+  padding: 10px 15px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tab.active {
+  border-bottom: 2px solid #3498db;
+  font-weight: bold;
+}
+.tab-content {
+  display: none;
+}
+.tab-content.active {
+  display: block;
+}
+.result {
+  background-color: #f9f9f9;
+  border: 1px solid #ddd;
+  padding: 15px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  min-height: 100px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.nav-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #ddd;
+}
+.nav-links {
+  display: flex;
+  gap: 15px;
+}
+.nav-links a {
+  color: #3498db;
+  text-decoration: none;
+  font-weight: 500;
+}
+.nav-links a:hover {
+  text-decoration: underline;
+}
+.nav-links a.active {
+  color: #2c3e50;
+  font-weight: bold;
+}
+.score-box {
+  font-size: 24px;
+  font-weight: bold;
+  text-align: center;
+  padding: 15px;
+  border-radius: 8px;
+  margin-bottom: 15px;
+}
+.score-box.high {
+  background-color: #d4efdf;
+  color: #27ae60;
+}
+.score-box.medium {
+  background-color: #fef9e7;
+  color: #f39c12;
+}
+.score-box.low {
+  background-color: #fadbd8;
+  color: #e74c3c;
+}
+.question-list {
+  list-style-type: decimal;
+  padding-left: 20px;
+}
+.question-list li {
+  margin-bottom: 10px;
+}
+.skill-tag {
+  display: inline-block;
+  padding: 5px 10px;
+  background-color: #eaeded;
+  border-radius: 15px;
+  margin-right: 5px;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+.skill-tag.high {
+  background-color: #fadbd8;
+}
+.skill-tag.medium {
+  background-color: #fef9e7;
+}
+.skill-tag.low {
+  background-color: #d4efdf;
+}
+/* JD管理ページ用の追加スタイル */
+.full-width {
+  flex-basis: 100%;
+}
+
+button.secondary {
+  background-color: #95a5a6;
+}
+button.secondary:hover {
+  background-color: #7f8c8d;
+}
+button.success {
+  background-color: #2ecc71;
+}
+button.success:hover {
+  background-color: #27ae60;
+}
+button.danger {
+  background-color: #e74c3c;
+}
+button.danger:hover {
+  background-color: #c0392b;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+}
+th, td {
+  padding: 12px 15px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+}
+thead th {
+  background-color: #f8f9fa;
+  font-weight: bold;
+}
+tr:hover {
+  background-color: #f5f5f5;
+}
+.action-buttons {
+  display: flex;
+  gap: 5px;
+}
+.action-button {
+  padding: 5px 10px;
+  font-size: 14px;
+}
+.hidden {
+  display: none;
+}
