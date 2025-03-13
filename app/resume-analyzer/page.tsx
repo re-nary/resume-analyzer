@@ -198,12 +198,17 @@ export default function Home() {
         ? extractedText.substring(0, maxLength) + "...(省略されました)"
         : extractedText;
       
+      // リクエストデータを準備
+      const requestData = {
+        resumeText: trimmedText,
+        jdData: selectedJd.data
+      };
+      
+      console.log('送信するリクエストデータ:', requestData);
+      
       const response = await fetch(analyzeWithGptUrl, {
         method: 'POST',
-        body: JSON.stringify({
-          resumeText: trimmedText,
-          jdData: selectedJd.data
-        }),
+        body: JSON.stringify(requestData),
         headers: {
           'Content-Type': 'application/json'
         },
