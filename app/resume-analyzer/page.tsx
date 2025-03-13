@@ -208,10 +208,11 @@ export default function Home() {
       
       const response = await fetch(analyzeWithGptUrl, {
         method: 'POST',
-        body: JSON.stringify(requestData),
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
         },
+        body: JSON.stringify(requestData),
         signal: controller.signal
       });
       
@@ -220,12 +221,6 @@ export default function Home() {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('API応答エラー:', response.status, errorText);
-        
-        // OpenAI APIエラーの特別処理
-        if (errorText.includes('api.openai.com') || errorText.includes('OpenAI')) {
-          throw new Error('OpenAI APIでエラーが発生しました。しばらく時間をおいて再試行してください。');
-        }
-        
         throw new Error(`サーバーエラー: ${response.status} ${response.statusText}\n${errorText}`);
       }
       
@@ -237,24 +232,14 @@ export default function Home() {
       
       // 結果を更新
       updateResults(result);
-      
       setAnalyzeStatus({ type: 'success', message: '分析が完了しました！' });
+      
     } catch (error) {
       console.error('分析エラー:', error);
-      
-      let errorMessage = error instanceof Error ? error.message : '不明なエラー';
-      
-      // OpenAI APIエラーの場合の特別なメッセージ
-      if (errorMessage.includes('500 Server Error') && errorMessage.includes('api.openai.com')) {
-        errorMessage = 'OpenAI APIでエラーが発生しました。しばらく時間をおいて再試行してください。';
-      }
-      
       setAnalyzeStatus({ 
         type: 'error', 
-        message: `エラー: ${errorMessage}` 
+        message: `エラー: ${error instanceof Error ? error.message : '不明なエラー'}` 
       });
-      
-      // エラー時は結果表示エリアをリセット
       resetResults();
     }
   };
