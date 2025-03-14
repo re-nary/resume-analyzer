@@ -11,6 +11,7 @@ import uuid
 import pandas as pd
 import openpyxl
 import requests
+import time
 from io import BytesIO
 from datetime import datetime
 
@@ -161,23 +162,56 @@ def extract_text(file_data, file_extension):
 def AnalyzeWithGPT(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('GPT API連携関数が呼び出されました')
     
+    # リクエストヘッダーをログに記録
+    request_headers = dict(req.headers)
+    logging.info(f"リクエストヘッダー: {request_headers}")
+    
+    # リクエストボディを取得（生のバイトデータ）
+    request_body_bytes = req.get_body()
+    
+    # Content-Typeを確認
+    content_type = req.headers.get('content-type', '').lower()
+    logging.info(f"Content-Type: {content_type}")
+    
+    # 文字列に変換してログに記録
+    body_text = request_body_bytes.decode('utf-8', errors='replace')
+    body_preview = body_text[:1000] + ('...' if len(body_text) > 1000 else '')
+    logging.info(f"受信したリクエストボディ (デコード): {body_preview}")
+    
     try:
-        try:
-            req_body = req.get_json()
-            logging.info(f"リクエストボディ: {req_body}")
-        except ValueError as e:
-            logging.error(f"JSONパースエラー: {str(e)}")
-            body_text = req.get_body().decode('utf-8', errors='replace')
-            logging.error(f"受信したリクエストボディ: {body_text[:1000]}")
+        # JSONとして解析
+        if 'application/json' in content_type:
+            try:
+                req_body = req.get_json()
+                logging.info(f"JSONとして解析されたリクエストボディ (キー): {list(req_body.keys())}")
+            except ValueError as e:
+                # 手動でJSONを解析してみる
+                try:
+                    req_body = json.loads(body_text)
+                    logging.info("手動JSON解析成功")
+                except json.JSONDecodeError as json_err:
+                    logging.error(f"JSON解析エラー: {str(json_err)}")
+                    return func.HttpResponse(
+                        json.dumps({
+                            "error": f"JSONの解析に失敗しました: {str(json_err)}",
+                            "request_preview": body_preview[:200]
+                        }),
+                        mimetype="application/json",
+                        status_code=400
+                    )
+        else:
+            logging.error(f"サポートされていないContent-Type: {content_type}")
             return func.HttpResponse(
-                json.dumps({"error": "HTTP request does not contain valid JSON data"}),
+                json.dumps({"error": f"サポートされていないContent-Type: {content_type}"}),
                 mimetype="application/json",
                 status_code=400
             )
         
+        # データの検証
         resume_text = req_body.get('resumeText')
         jd_data = req_body.get('jdData', {})
         
+        # 入力データの検証
         if not resume_text:
             logging.error("レジュメテキストが提供されていません")
             return func.HttpResponse(
@@ -186,17 +220,71 @@ def AnalyzeWithGPT(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
         
+        if not isinstance(jd_data, dict):
+            logging.error(f"不正なJDデータ形式: {type(jd_data)}")
+            return func.HttpResponse(
+                json.dumps({"error": "JDデータは辞書形式である必要があります"}),
+                mimetype="application/json",
+                status_code=400
+            )
+        
         logging.info("GPT API呼び出し開始")
-        analysis_result = call_gpt_api(resume_text, jd_data)
+        
+        # GPT API呼び出し（リトライロジック付き）
+        max_retries = 3
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                analysis_result = call_gpt_api(resume_text, jd_data)
+                
+                # エラーがある場合は再試行
+                if "error" in analysis_result:
+                    error_msg = analysis_result["error"]
+                    if "レート制限" in error_msg or "rate limit" in error_msg.lower():
+                        retry_count += 1
+                        wait_time = min(2 ** retry_count, 30)
+                        logging.warning(f"GPT APIレート制限エラー。{wait_time}秒後に再試行 ({retry_count}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                
+                # エラーがなければ、または再試行対象外のエラーならば結果を返す
+                break
+                
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                wait_time = min(2 ** retry_count, 30)
+                logging.error(f"GPT API呼び出しエラー: {str(e)}. {wait_time}秒後に再試行 ({retry_count}/{max_retries})")
+                time.sleep(wait_time)
+        
+        # すべてのリトライが失敗した場合
+        if retry_count == max_retries and last_error:
+            logging.error(f"すべてのリトライが失敗しました: {str(last_error)}")
+            return func.HttpResponse(
+                json.dumps({"error": f"GPT APIへの接続に失敗しました: {str(last_error)}"}),
+                mimetype="application/json",
+                status_code=500
+            )
+        
         logging.info("GPT API呼び出し完了")
+        
+        # CORS対応ヘッダーを追加
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization"
+        }
         
         return func.HttpResponse(
             json.dumps(analysis_result, ensure_ascii=False),
             mimetype="application/json",
+            headers=headers,
             status_code=200
         )
     except Exception as e:
-        logging.error(f"エラー発生: {str(e)}")
+        logging.error(f"予期せぬエラー: {str(e)}")
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             mimetype="application/json",
@@ -206,14 +294,16 @@ def AnalyzeWithGPT(req: func.HttpRequest) -> func.HttpResponse:
 def call_gpt_api(resume_text, jd_data):
     """GPT APIを呼び出してレジュメを分析する関数"""
     try:
-        api_key = os.environ.get("OPENAI_HERE")
+        # APIキーの取得 - 複数の環境変数名をチェック
+        api_key = os.environ.get("OPENAI_API_KEY", os.environ.get("OPENAI_HERE", ""))
         if not api_key:
-            logging.error("環境変数 OPENAI_HERE が設定されていません")
+            logging.error("環境変数 OPENAI_API_KEY または OPENAI_HERE が設定されていません")
             return {"error": "APIキーが設定されていません"}
             
         api_url = "https://api.openai.com/v1/chat/completions"
         
-        max_tokens = 12000
+        # テキストの長さを制限
+        max_tokens = 8000  # より安全な長さに調整
         if len(resume_text) > max_tokens:
             resume_text = resume_text[:max_tokens] + "...(省略)"
             
@@ -224,22 +314,48 @@ def call_gpt_api(resume_text, jd_data):
             "Content-Type": "application/json"
         }
         
+        # レスポンスフォーマットの検証
+        use_json_format = True
+        
+        try:
+            # テスト用に小さなリクエストを送信して、response_formatがサポートされているか確認
+            test_payload = {
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "Say hello in JSON"}],
+                "max_tokens": 20,
+                "response_format": {"type": "json_object"}
+            }
+            test_response = requests.post(api_url, headers=headers, json=test_payload, timeout=10)
+            
+            if test_response.status_code == 400 and "response_format" in test_response.text:
+                use_json_format = False
+                logging.warning("API doesn't support response_format, disabling...")
+        except Exception as e:
+            use_json_format = False
+            logging.warning(f"API テスト中にエラーが発生しました、response_format を無効化: {str(e)}")
+        
+        # メインのペイロード
         payload = {
             "model": "gpt-4",
             "messages": [
-                {"role": "system", "content": "あなたは履歴書を分析する専門家です。正確で詳細な分析を提供してください。"},
+                {"role": "system", "content": "あなたは履歴書を分析する専門家です。必ず有効なJSONのみを出力し、JSON以外のテキストは出力しないでください。"},
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 4000,
-            "temperature": 0.2,
-            "response_format": { "type": "json_object" }
+            "max_tokens": 2048,  # より安全な値に調整
+            "temperature": 0.2
         }
         
-        logging.info("OpenAI APIリクエスト準備完了")
-        logging.info(f"使用モデル: {payload['model']}")
+        # 最新のAPIでサポートされている場合のみ追加
+        if use_json_format:
+            payload["response_format"] = {"type": "json_object"}
         
+        logging.info("OpenAI APIリクエスト準備完了")
+        logging.info(f"使用モデル: {payload['model']}, response_format 使用: {use_json_format}")
+        
+        # リクエスト送信（タイムアウト設定）
         response = requests.post(api_url, headers=headers, json=payload, timeout=180)
         
+        # エラー処理
         if response.status_code != 200:
             error_detail = response.text[:500] if response.text else "詳細なし"
             logging.error(f"OpenAI API応答エラー: Status={response.status_code}, Response={error_detail}")
@@ -253,19 +369,37 @@ def call_gpt_api(resume_text, jd_data):
             else:
                 return {"error": f"OpenAI APIエラー: {response.status_code} - {error_detail}"}
             
+        # レスポンスの解析
         result = response.json()
         analysis_text = result['choices'][0]['message']['content']
         
+        logging.info(f"GPT応答テキスト長: {len(analysis_text)} 文字")
+        logging.info(f"GPT応答テキストプレビュー: {analysis_text[:100]}...")
+        
+        # JSONデータの抽出と解析
         try:
-            json_start = analysis_text.find('{')
-            json_end = analysis_text.rfind('}') + 1
-            if json_start >= 0 and json_end > 0:
-                json_str = analysis_text[json_start:json_end]
-                analysis_data = json.loads(json_str)
-            else:
+            # まず単純にJSONとして解析を試みる
+            analysis_data = json.loads(analysis_text)
+            logging.info("JSON直接解析成功")
+        except json.JSONDecodeError as json_err:
+            logging.warning(f"JSON直接解析エラー: {str(json_err)}")
+            
+            # JSON部分を抽出して解析を試みる
+            try:
+                json_start = analysis_text.find('{')
+                json_end = analysis_text.rfind('}') + 1
+                
+                if json_start >= 0 and json_end > 0:
+                    json_str = analysis_text[json_start:json_end]
+                    logging.info(f"抽出されたJSON文字列: {json_str[:100]}...")
+                    analysis_data = json.loads(json_str)
+                    logging.info("JSON部分解析成功")
+                else:
+                    logging.error("JSONが見つかりません")
+                    analysis_data = {"raw_analysis": analysis_text}
+            except json.JSONDecodeError as extract_err:
+                logging.error(f"JSON部分解析エラー: {str(extract_err)}")
                 analysis_data = {"raw_analysis": analysis_text}
-        except json.JSONDecodeError:
-            analysis_data = {"raw_analysis": analysis_text}
         
         return analysis_data
     
@@ -281,7 +415,25 @@ def call_gpt_api(resume_text, jd_data):
 
 def create_analysis_prompt(resume_text, jd_data):
     """分析用のプロンプトを作成する関数"""
-    jd_json = json.dumps(jd_data, ensure_ascii=False, indent=2)
+    # JDデータの整形
+    # 重要なキーの存在を確認し、存在しない場合は空の文字列を使用
+    position = jd_data.get('position', '')
+    requirements = jd_data.get('requirements', '')
+    responsibilities = jd_data.get('responsibilities', '')
+    
+    # JDデータのサイズを制限
+    position = position[:1000] + ('...' if len(position) > 1000 else '')
+    requirements = requirements[:2000] + ('...' if len(requirements) > 2000 else '')
+    responsibilities = responsibilities[:2000] + ('...' if len(responsibilities) > 2000 else '')
+    
+    # 簡略化したJDデータ
+    simplified_jd = {
+        "position": position,
+        "requirements": requirements,
+        "responsibilities": responsibilities
+    }
+    
+    jd_json = json.dumps(simplified_jd, ensure_ascii=False, indent=2)
     
     prompt = f"""レジュメ情報:
 {resume_text}
@@ -290,18 +442,18 @@ JD情報:
 {jd_json}
 
 指示：
-以下の分析を行い、JSONフォーマットで結果を返してください:
+以下の分析を行い、必ず有効なJSONフォーマットで結果を返してください:
 
 1. このレジュメのスキル・経験と、JDの要件との適合度を100点満点で評価し、その理由を説明してください。
 
-2. この候補者に対して、選択されたポジションに関する面接質問を10個作成してください。質問は候補者の経歴に基づき、技術的能力、経験、文化的フィット、成果などを評価できるものにしてください。
+2. この候補者に対して、選択されたポジションに関する面接質問を5個作成してください。質問は候補者の経歴に基づき、技術的能力、経験、文化的フィット、成果などを評価できるものにしてください。
 
 3. 候補者の経歴において掘り下げるべき重要ポイントや、JDとの比較で不足していると思われるスキル・経験を3〜5点特定してください。
 
 4. レジュメに記載された各勤務先とその期間、役職を抽出してリスト化してください。
 
 出力形式:
-必ずJSONで返答してください:
+必ず以下の形式の有効なJSONオブジェクトだけを返してください:
 {{
     "適合度評価": {{
         "スコア": 80,
@@ -328,7 +480,8 @@ JD情報:
         "..."
     ]
 }}
-この形式に厳密に従ってください。JSONのみを出力し、追加の説明は不要です。
+
+この形式に厳密に従い、JSONオブジェクトのみを出力してください。文章や説明などJSONの前後に余計なテキストは含めないでください。
 """
     return prompt
 
@@ -347,6 +500,21 @@ def serialize_entity(entity):
 @app.route(route="ManageJD", methods=["POST", "GET"])
 def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('JD管理関数が呼び出されました')
+    
+    # CORS対応ヘッダー
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    }
+    
+    # OPTIONSリクエストの処理
+    if req.method == "OPTIONS":
+        return func.HttpResponse(
+            status_code=200,
+            headers=headers
+        )
+        
     try:
         if req.method == "GET":
             try:
@@ -381,6 +549,7 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(
                     json.dumps(result),
                     mimetype="application/json",
+                    headers=headers,
                     status_code=200
                 )
             except Exception as e:
@@ -388,6 +557,7 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(
                     json.dumps({"error": str(e)}),
                     mimetype="application/json",
+                    headers=headers,
                     status_code=500
                 )
         
@@ -396,9 +566,12 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
                 req_body = req.get_json()
             except ValueError as e:
                 logging.error(f"JSONパースエラー: {str(e)}")
+                body_text = req.get_body().decode('utf-8', errors='replace')
+                logging.error(f"受信したリクエストボディ: {body_text[:1000]}")
                 return func.HttpResponse(
                     json.dumps({"error": "Invalid JSON data"}),
                     mimetype="application/json",
+                    headers=headers,
                     status_code=400
                 )
             
@@ -412,6 +585,7 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
                     return func.HttpResponse(
                         json.dumps({"status": "success", "message": "JDが削除されました"}),
                         mimetype="application/json",
+                        headers=headers,
                         status_code=200
                     )
                 
@@ -443,6 +617,7 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(
                     json.dumps({"id": jd_id, "status": "success"}),
                     mimetype="application/json",
+                    headers=headers,
                     status_code=200
                 )
             except Exception as e:
@@ -450,6 +625,7 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(
                     json.dumps({"error": str(e)}),
                     mimetype="application/json",
+                    headers=headers,
                     status_code=500
                 )
     
@@ -458,12 +634,28 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             mimetype="application/json",
+            headers=headers,
             status_code=500
         )
 
-@app.route(route="ImportJDFromExcel", methods=["POST"])
+@app.route(route="ImportJDFromExcel", methods=["POST", "OPTIONS"])
 def ImportJDFromExcel(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Excel JDインポート関数が呼び出されました')
+    
+    # CORS対応ヘッダー
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    }
+    
+    # OPTIONSリクエストの処理
+    if req.method == "OPTIONS":
+        return func.HttpResponse(
+            status_code=200,
+            headers=headers
+        )
+        
     try:
         file_data = req.get_body()
         
@@ -500,53 +692,8 @@ def ImportJDFromExcel(req: func.HttpRequest) -> func.HttpResponse:
                 "items": results
             }),
             mimetype="application/json",
+            headers=headers,
             status_code=200
         )
     except Exception as e:
-        logging.error(f"Excelインポートエラー: {str(e)}")
-        return func.HttpResponse(
-            json.dumps({"error": str(e)}),
-            mimetype="application/json",
-            status_code=500
-        )
-
-def parse_jd_excel(file_data):
-    """Excelファイルを解析してJDリストを作成する関数"""
-    try:
-        excel_file = BytesIO(file_data)
-        df = pd.read_excel(excel_file)
-        required_columns = ['position', 'requirements', 'responsibilities']
-        for col in required_columns:
-            if col not in df.columns:
-                raise ValueError(f"必須カラム '{col}' がExcelに存在しません")
-        
-        jd_list = []
-        for _, row in df.iterrows():
-            jd = {}
-            for col in df.columns:
-                if pd.notna(row[col]):
-                    jd[col] = row[col]
-            if 'position' in jd and jd['position']:
-                jd_list.append(jd)
-        
-        return jd_list
-
-    except Exception as e:
-        logging.error(f"Excel解析エラー: {str(e)}")
-        raise e
-
-def get_table_client(table_name):
-    """Table Storageのクライアントを取得する関数"""
-    try:
-        connection_string = os.environ["StorageConnectionString"]
-        table_service_client = TableServiceClient.from_connection_string(connection_string)
-        
-        try:
-            table_service_client.create_table(table_name)
-        except Exception as e:
-            logging.info(f"テーブル作成スキップ: {str(e)}")
-        
-        return table_service_client.get_table_client(table_name)
-    except Exception as e:
-        logging.error(f"テーブルクライアント取得エラー: {str(e)}")
-        raise e
+        logging.error(f"
