@@ -60,9 +60,23 @@ def process_resume(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         )
 
-@app.route(route="AnalyzeWithGPT", methods=["POST"])
+@app.route(route="AnalyzeWithGPT", methods=["POST", "OPTIONS"])
 def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('AnalyzeWithGPT function processed a request.')
+    
+    # CORS対応ヘッダー
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+    }
+    
+    # OPTIONSリクエストの処理
+    if req.method == "OPTIONS":
+        return func.HttpResponse(
+            status_code=200,
+            headers=headers
+        )
     
     try:
         # リクエストボディのログ出力
@@ -77,6 +91,7 @@ def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps({"error": "リクエストの形式が正しくありません"}),
                 mimetype="application/json",
+                headers=headers,
                 status_code=400
             )
 
@@ -86,6 +101,7 @@ def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps({"error": "レジュメテキストが必要です"}),
                 mimetype="application/json",
+                headers=headers,
                 status_code=400
             )
 
@@ -98,6 +114,7 @@ def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
             return func.HttpResponse(
                 json.dumps(analysis_result, ensure_ascii=False),
                 mimetype="application/json",
+                headers=headers,
                 status_code=200
             )
         except Exception as e:
@@ -107,11 +124,13 @@ def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
                 return func.HttpResponse(
                     json.dumps({"error": "GPT APIとの通信に失敗しました"}),
                     mimetype="application/json",
+                    headers=headers,
                     status_code=500
                 )
             return func.HttpResponse(
                 json.dumps({"error": "レジュメの分析中にエラーが発生しました"}),
                 mimetype="application/json",
+                headers=headers,
                 status_code=500
             )
 
@@ -120,6 +139,7 @@ def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": "サーバーエラーが発生しました"}),
             mimetype="application/json",
+            headers=headers,
             status_code=500
         )
 
