@@ -65,10 +65,23 @@ def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('AnalyzeWithGPT function processed a request.')
     
     try:
-        req_body = req.get_json()
-        resume_text = req_body.get('resumeText')
-        jd_data = req_body.get('jdData', {})
+        # リクエストボディのログ出力
+        request_body = req.get_body().decode('utf-8')
+        logging.info(f"受信したリクエストボディ: {request_body[:1000]}")
 
+        # JSONパース
+        try:
+            req_body = req.get_json()
+        except ValueError as e:
+            logging.error(f"JSONパースエラー: {str(e)}")
+            return func.HttpResponse(
+                json.dumps({"error": "リクエストの形式が正しくありません"}),
+                mimetype="application/json",
+                status_code=400
+            )
+
+        # 必須パラメータのチェック
+        resume_text = req_body.get('resumeText')
         if not resume_text:
             return func.HttpResponse(
                 json.dumps({"error": "レジュメテキストが必要です"}),
@@ -76,18 +89,36 @@ def analyze_with_gpt(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400
             )
 
-        analysis_result = analyze_resume(resume_text, jd_data)
+        # JDデータの取得（オプショナル）
+        jd_data = req_body.get('jdData', {})
         
-        return func.HttpResponse(
-            json.dumps(analysis_result, ensure_ascii=False),
-            mimetype="application/json",
-            status_code=200
-        )
+        # GPT分析の実行
+        try:
+            analysis_result = analyze_resume(resume_text, jd_data)
+            return func.HttpResponse(
+                json.dumps(analysis_result, ensure_ascii=False),
+                mimetype="application/json",
+                status_code=200
+            )
+        except Exception as e:
+            logging.error(f"GPT分析エラー: {str(e)}")
+            error_message = str(e)
+            if "API" in error_message:
+                return func.HttpResponse(
+                    json.dumps({"error": "GPT APIとの通信に失敗しました"}),
+                    mimetype="application/json",
+                    status_code=500
+                )
+            return func.HttpResponse(
+                json.dumps({"error": "レジュメの分析中にエラーが発生しました"}),
+                mimetype="application/json",
+                status_code=500
+            )
 
     except Exception as e:
-        logging.error(f"エラー発生: {str(e)}")
+        logging.error(f"予期せぬエラー: {str(e)}")
         return func.HttpResponse(
-            json.dumps({"error": str(e)}),
+            json.dumps({"error": "サーバーエラーが発生しました"}),
             mimetype="application/json",
             status_code=500
         )
@@ -339,14 +370,12 @@ def ManageJD(req: func.HttpRequest) -> func.HttpResponse:
 def ImportJDFromExcel(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Excel JDインポート関数が呼び出されました')
     
-    # CORS対応ヘッダー
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization"
     }
     
-    # OPTIONSリクエストの処理
     if req.method == "OPTIONS":
         return func.HttpResponse(
             status_code=200,
@@ -355,17 +384,21 @@ def ImportJDFromExcel(req: func.HttpRequest) -> func.HttpResponse:
         
     try:
         file_data = req.get_body()
-        
+        if not file_data:
+            return func.HttpResponse(
+                json.dumps({"error": "ファイルデータが見つかりません"}),
+                mimetype="application/json",
+                headers=headers,
+                status_code=400
+            )
+            
         jd_list = parse_jd_excel(file_data)
-        
         results = []
         table_client = get_table_client("jdList")
-        
         current_time = datetime.utcnow().isoformat()
         
         for jd in jd_list:
             jd_id = str(uuid.uuid4())
-            
             entity = {
                 'PartitionKey': 'jd',
                 'RowKey': jd_id,
@@ -375,7 +408,6 @@ def ImportJDFromExcel(req: func.HttpRequest) -> func.HttpResponse:
                 'updatedAt': current_time,
                 'data': json.dumps(jd)
             }
-            
             table_client.upsert_entity(entity)
             results.append({
                 "id": jd_id, 
@@ -393,4 +425,10 @@ def ImportJDFromExcel(req: func.HttpRequest) -> func.HttpResponse:
             status_code=200
         )
     except Exception as e:
-        logging.error(f"
+        logging.error(f"Excelインポートエラー: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            mimetype="application/json",
+            headers=headers,
+            status_code=500
+        )
